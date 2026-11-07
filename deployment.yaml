@@ -1,0 +1,123 @@
+﻿apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-hello
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  selector:
+    matchLabels:
+      app: nginx-hello
+
+  template:
+    metadata:
+      labels:
+        app: nginx-hello
+
+    spec:
+      shareProcessNamespace: true
+      automountServiceAccountToken: false
+
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: nginx-hello
+
+      initContainers:
+        - name: init-done
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "echo done"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+
+      containers:
+        - name: nginx
+          image: nginx:stable-alpine
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - containerPort: 80
+
+          env:
+            - name: TZ
+              value: "EET-2"
+
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "hello in MLOPS MENA COMMUNITY : $(date '+%Y-%m-%d %H:%M:%S')" > /usr/share/nginx/html/index.html
+              exec nginx -g 'daemon off;'
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            periodSeconds: 5
+
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+
+        - name: time-updater
+          image: alpine:3.20
+          imagePullPolicy: IfNotPresent
+
+          env:
+            - name: TZ
+              value: "EET-2"
+
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              while true; do
+                nginx_pid=""
+
+                for proc in /proc/[0-9]*; do
+                  [ -r "$proc/cmdline" ] || continue
+                  cmd=$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null || true)
+
+                  case "$cmd" in
+                    *"nginx: master process"*)
+                      nginx_pid="${proc##*/}"
+                      break
+                      ;;
+                  esac
+                done
+
+                if [ -n "$nginx_pid" ] && [ -d "/proc/$nginx_pid/root/usr/share/nginx/html" ]; then
+                  echo "hello in MLOPS MENA COMMUNITY : $(date '+%Y-%m-%d %H:%M:%S')" > "/proc/$nginx_pid/root/usr/share/nginx/html/index.html"
+                  echo "Timestamp updated successfully"
+                else
+                  echo "Waiting for Nginx process..."
+                fi
+
+                sleep 5
+              done
+
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+
+
